@@ -8,15 +8,21 @@ from jwt import PyJWKClient
 from app.core.config import settings
 
 
-security = HTTPBearer()
+security = HTTPBearer(auto_error=False)
 
 jwks_url = f"{settings.supabase_url}/auth/v1/.well-known/jwks.json"
 jwks_client = PyJWKClient(jwks_url)
 
 
 def get_current_user(
-    credentials: HTTPAuthorizationCredentials = Depends(security),
+    credentials: HTTPAuthorizationCredentials | None = Depends(security),
 ) -> UUID:
+    if credentials is None or not credentials.credentials:
+        raise HTTPException(
+            status_code=401,
+            detail="Not authenticated",
+        )
+
     token = credentials.credentials
 
     try:
