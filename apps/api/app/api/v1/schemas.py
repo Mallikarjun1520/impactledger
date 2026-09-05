@@ -11,4 +11,3 @@ class DistributionCreate(BaseModel):
     destination: str
     beneficiary_count: int = Field(ge=0)
     notes: str | None = None
-    created_by: UUID

@@ -1,10 +1,12 @@
+from uuid import UUID
+
 import psycopg
 
 from app.api.v1.schemas import DistributionCreate
 from app.core.config import settings
 
 
-def create_distribution(data: DistributionCreate) -> str:
+def create_distribution(data: DistributionCreate, created_by: UUID) -> str:
     with psycopg.connect(settings.database_url) as connection:
         with connection.cursor() as cursor:
 
@@ -73,7 +75,7 @@ def create_distribution(data: DistributionCreate) -> str:
                     data.destination,
                     data.beneficiary_count,
                     data.notes,
-                    data.created_by,
+                    created_by,
                 ),
             )
 
@@ -103,7 +105,7 @@ def create_distribution(data: DistributionCreate) -> str:
                     data.resource_batch_id,
                     data.quantity,
                     data.destination,
-                    data.created_by,
+                    created_by,
                     f"Distribution {distribution_id}",
                 ),
             )
