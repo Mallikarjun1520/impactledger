@@ -22,3 +22,19 @@ def get_current_membership(
         )
 
     return membership
+
+
+def require_role(*allowed_roles: str):
+    allowed = frozenset(allowed_roles)
+
+    def dependency(
+        membership: OrganizationMembership = Depends(get_current_membership),
+    ) -> OrganizationMembership:
+        if membership.role not in allowed:
+            raise HTTPException(
+                status_code=403,
+                detail="Insufficient role for this operation",
+            )
+        return membership
+
+    return dependency
