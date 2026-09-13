@@ -3,15 +3,15 @@ from uuid import UUID
 
 import psycopg
 
-from app.core.config import settings
-from app.api.v1.schemas import OrganizationMemberCreate
-from dataclasses import dataclass
-from uuid import UUID
-
-import psycopg
-
 from app.api.v1.schemas import OrganizationMemberCreate, OrganizationRole
 from app.core.config import settings
+from app.core.exceptions import (
+    LastAdminError,
+    MemberAlreadyExistsError,
+    OrganizationNotFoundError,
+)
+
+
 @dataclass(frozen=True)
 class OrganizationMembership:
     organization_id: UUID
@@ -86,7 +86,7 @@ def add_organization_member(
             )
 
             if cursor.fetchone() is None:
-                raise ValueError("Organization not found")
+                raise OrganizationNotFoundError("Organization not found")
 
             # Make sure the target user exists
             cursor.execute(
@@ -102,22 +102,25 @@ def add_organization_member(
                 raise ValueError("User not found")
 
             # Add the membership
-            cursor.execute(
-                """
-                INSERT INTO organization_members (
-                    organization_id,
-                    user_id,
-                    role
+            try:
+                cursor.execute(
+                    """
+                    INSERT INTO organization_members (
+                        organization_id,
+                        user_id,
+                        role
+                    )
+                    VALUES (%s, %s, %s)
+                    RETURNING organization_id, user_id, role::text
+                    """,
+                    (
+                        organization_id,
+                        data.user_id,
+                        data.role.value,
+                    ),
                 )
-                VALUES (%s, %s, %s)
-                RETURNING organization_id, user_id, role::text
-                """,
-                (
-                    organization_id,
-                    data.user_id,
-                    data.role.value,
-                ),
-            )
+            except psycopg.errors.UniqueViolation:
+                raise MemberAlreadyExistsError("User is already a member of this organization")
 
             row = cursor.fetchone()
 
@@ -129,6 +132,8 @@ def add_organization_member(
                 user_id=row[1],
                 role=row[2],
             )
+
+
 def update_organization_member(
     organization_id: UUID,
     user_id: UUID,
@@ -136,6 +141,53 @@ def update_organization_member(
 ) -> OrganizationMembership | None:
     with psycopg.connect(settings.database_url) as connection:
         with connection.cursor() as cursor:
+            # Lock the organization row to serialize member role/removal operations
+            cursor.execute(
+                """
+                SELECT id
+                FROM organizations
+                WHERE id = %s
+                FOR UPDATE
+                """,
+                (organization_id,),
+            )
+
+            if cursor.fetchone() is None:
+                raise OrganizationNotFoundError("Organization not found")
+
+            # Check target member's current role with row-level lock
+            cursor.execute(
+                """
+                SELECT role::text
+                FROM organization_members
+                WHERE organization_id = %s
+                  AND user_id = %s
+                FOR UPDATE
+                """,
+                (organization_id, user_id),
+            )
+            current_member = cursor.fetchone()
+
+            if current_member is None:
+                return None
+
+            current_role = current_member[0]
+
+            # Last-admin protection: cannot demote the final ADMIN
+            if current_role == "ADMIN" and role.value != "ADMIN":
+                cursor.execute(
+                    """
+                    SELECT COUNT(*)
+                    FROM organization_members
+                    WHERE organization_id = %s
+                      AND role = 'ADMIN'
+                    """,
+                    (organization_id,),
+                )
+                admin_count = cursor.fetchone()[0]
+                if admin_count <= 1:
+                    raise LastAdminError("Organization must have at least one admin")
+
             cursor.execute(
                 """
                 UPDATE organization_members
@@ -162,3 +214,67 @@ def update_organization_member(
         user_id=row[1],
         role=row[2],
     )
+
+
+def delete_organization_member(
+    organization_id: UUID,
+    user_id: UUID,
+) -> bool:
+    with psycopg.connect(settings.database_url) as connection:
+        with connection.cursor() as cursor:
+            # Lock the organization row to serialize member role/removal operations
+            cursor.execute(
+                """
+                SELECT id
+                FROM organizations
+                WHERE id = %s
+                FOR UPDATE
+                """,
+                (organization_id,),
+            )
+
+            if cursor.fetchone() is None:
+                raise OrganizationNotFoundError("Organization not found")
+
+            # Check target member's current role with row-level lock
+            cursor.execute(
+                """
+                SELECT role::text
+                FROM organization_members
+                WHERE organization_id = %s
+                  AND user_id = %s
+                FOR UPDATE
+                """,
+                (organization_id, user_id),
+            )
+            current_member = cursor.fetchone()
+
+            if current_member is None:
+                return False
+
+            current_role = current_member[0]
+
+            # Last-admin protection: cannot delete the final ADMIN
+            if current_role == "ADMIN":
+                cursor.execute(
+                    """
+                    SELECT COUNT(*)
+                    FROM organization_members
+                    WHERE organization_id = %s
+                      AND role = 'ADMIN'
+                    """,
+                    (organization_id,),
+                )
+                admin_count = cursor.fetchone()[0]
+                if admin_count <= 1:
+                    raise LastAdminError("Organization must have at least one admin")
+
+            cursor.execute(
+                """
+                DELETE FROM organization_members
+                WHERE organization_id = %s
+                  AND user_id = %s
+                """,
+                (organization_id, user_id),
+            )
+            return True

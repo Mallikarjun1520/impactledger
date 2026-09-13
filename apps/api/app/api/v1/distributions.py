@@ -1,7 +1,10 @@
+
+from uuid import UUID
+
 from fastapi import APIRouter, HTTPException, Depends
 
 from app.api.v1.schemas import DistributionCreate
-from app.core.authorization import require_role
+from app.core.authorization import get_current_membership, require_role
 from app.infrastructure.database.distributions import (
     create_distribution,
     get_distributions,
@@ -21,14 +24,12 @@ def create_distribution_endpoint(
         require_role(*DISTRIBUTION_CREATE_ROLES)
     ),
 ) -> dict[str, str]:
-    if data.organization_id != membership.organization_id:
-        raise HTTPException(
-            status_code=403,
-            detail="Distribution organization does not match X-Organization-ID",
-        )
-
     try:
-        distribution_id = create_distribution(data, created_by=membership.user_id)
+        distribution_id = create_distribution(
+            data,
+            created_by=membership.user_id,
+            organization_id=membership.organization_id,
+        )
 
         return {
             "status": "distribution created",
@@ -43,15 +44,29 @@ def create_distribution_endpoint(
 
 
 @router.get("/distributions")
-def list_distributions() -> list[dict]:
-    return get_distributions()
+def list_distributions(
+    membership: OrganizationMembership = Depends(get_current_membership),
+) -> list[dict]:
+    return get_distributions(organization_id=membership.organization_id)
 
 
 @router.get("/inventory/{resource_batch_id}")
-def inventory(resource_batch_id: str) -> dict[str, str | float]:
-    quantity = get_inventory(resource_batch_id)
+def inventory(
+    resource_batch_id: UUID,
+    membership: OrganizationMembership = Depends(get_current_membership),
+) -> dict[str, str | float]:
+    quantity = get_inventory(
+        resource_batch_id=resource_batch_id,
+        organization_id=membership.organization_id,
+    )
+
+    if quantity is None:
+        raise HTTPException(
+            status_code=404,
+            detail="Resource batch not found",
+        )
 
     return {
-        "resource_batch_id": resource_batch_id,
+        "resource_batch_id": str(resource_batch_id),
         "available_quantity": quantity,
     }

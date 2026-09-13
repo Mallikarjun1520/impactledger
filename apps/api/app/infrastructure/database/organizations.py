@@ -4,30 +4,34 @@ import psycopg
 
 from app.api.v1.schemas import OrganizationCreate
 from app.core.config import settings
+from app.core.exceptions import DuplicateSlugError
 
 
 def create_organization(
     data: OrganizationCreate,
-    user_id,
+    user_id: UUID,
 ) -> dict:
     with psycopg.connect(settings.database_url) as connection:
         with connection.cursor() as cursor:
-            cursor.execute(
-                """
-                INSERT INTO organizations (
-                    name,
-                    slug,
-                    description
+            try:
+                cursor.execute(
+                    """
+                    INSERT INTO organizations (
+                        name,
+                        slug,
+                        description
+                    )
+                    VALUES (%s, %s, %s)
+                    RETURNING id, name, slug, description
+                    """,
+                    (
+                        data.name,
+                        data.slug,
+                        data.description,
+                    ),
                 )
-                VALUES (%s, %s, %s)
-                RETURNING id, name, slug, description
-                """,
-                (
-                    data.name,
-                    data.slug,
-                    data.description,
-                ),
-            )
+            except psycopg.errors.UniqueViolation:
+                raise DuplicateSlugError(f"Organization with slug '{data.slug}' already exists")
 
             organization = cursor.fetchone()
 

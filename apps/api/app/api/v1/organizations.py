@@ -9,8 +9,16 @@ from app.api.v1.schemas import (
 )
 from app.core.auth import get_current_user
 from app.core.authorization import get_current_membership
+from app.core.exceptions import (
+    DuplicateSlugError,
+    LastAdminError,
+    MemberAlreadyExistsError,
+    OrganizationNotFoundError,
+)
 from app.infrastructure.database.organization_members import (
+    OrganizationMembership,
     add_organization_member,
+    delete_organization_member,
     list_organization_members,
     update_organization_member,
 )
@@ -40,7 +48,13 @@ def create_organization_endpoint(
             "description": organization["description"],
         }
 
-    except Exception as error:
+    except DuplicateSlugError as error:
+        raise HTTPException(
+            status_code=409,
+            detail=str(error),
+        )
+
+    except ValueError as error:
         raise HTTPException(
             status_code=400,
             detail=str(error),
@@ -50,8 +64,14 @@ def create_organization_endpoint(
 @router.get("/organizations/{organization_id}")
 def get_organization_endpoint(
     organization_id: UUID,
-    membership=Depends(get_current_membership),
+    membership: OrganizationMembership = Depends(get_current_membership),
 ) -> dict:
+    if membership.organization_id != organization_id:
+        raise HTTPException(
+            status_code=403,
+            detail="Organization ID does not match X-Organization-ID",
+        )
+
     organization = get_organization(organization_id)
 
     if organization is None:
@@ -73,8 +93,14 @@ def get_organization_endpoint(
 @router.get("/organizations/{organization_id}/members")
 def list_members_endpoint(
     organization_id: UUID,
-    membership=Depends(get_current_membership),
+    membership: OrganizationMembership = Depends(get_current_membership),
 ) -> list[dict]:
+    if membership.organization_id != organization_id:
+        raise HTTPException(
+            status_code=403,
+            detail="Organization ID does not match X-Organization-ID",
+        )
+
     members = list_organization_members(organization_id)
 
     return [
@@ -91,7 +117,7 @@ def list_members_endpoint(
 def add_member_endpoint(
     organization_id: UUID,
     data: OrganizationMemberCreate,
-    membership=Depends(get_current_membership),
+    membership: OrganizationMembership = Depends(get_current_membership),
 ) -> dict:
     if membership.role != "ADMIN":
         raise HTTPException(
@@ -117,6 +143,18 @@ def add_member_endpoint(
             "role": member.role,
         }
 
+    except MemberAlreadyExistsError as error:
+        raise HTTPException(
+            status_code=409,
+            detail=str(error),
+        )
+
+    except OrganizationNotFoundError as error:
+        raise HTTPException(
+            status_code=404,
+            detail=str(error),
+        )
+
     except ValueError as error:
         raise HTTPException(
             status_code=400,
@@ -129,7 +167,7 @@ def update_member_endpoint(
     organization_id: UUID,
     user_id: UUID,
     data: OrganizationMemberUpdate,
-    membership=Depends(get_current_membership),
+    membership: OrganizationMembership = Depends(get_current_membership),
 ) -> dict:
     if membership.role != "ADMIN":
         raise HTTPException(
@@ -143,11 +181,17 @@ def update_member_endpoint(
             detail="Organization ID does not match X-Organization-ID",
         )
 
-    member = update_organization_member(
-        organization_id=organization_id,
-        user_id=user_id,
-        role=data.role,
-    )
+    try:
+        member = update_organization_member(
+            organization_id=organization_id,
+            user_id=user_id,
+            role=data.role,
+        )
+    except LastAdminError as error:
+        raise HTTPException(
+            status_code=409,
+            detail=str(error),
+        )
 
     if member is None:
         raise HTTPException(
@@ -159,4 +203,46 @@ def update_member_endpoint(
         "organization_id": str(member.organization_id),
         "user_id": str(member.user_id),
         "role": member.role,
+    }
+
+
+@router.delete("/organizations/{organization_id}/members/{user_id}")
+def delete_member_endpoint(
+    organization_id: UUID,
+    user_id: UUID,
+    membership: OrganizationMembership = Depends(get_current_membership),
+) -> dict:
+    if membership.role != "ADMIN":
+        raise HTTPException(
+            status_code=403,
+            detail="Only organization admins can manage members",
+        )
+
+    if membership.organization_id != organization_id:
+        raise HTTPException(
+            status_code=403,
+            detail="Organization ID does not match X-Organization-ID",
+        )
+
+    try:
+        deleted = delete_organization_member(
+            organization_id=organization_id,
+            user_id=user_id,
+        )
+    except LastAdminError as error:
+        raise HTTPException(
+            status_code=409,
+            detail=str(error),
+        )
+
+    if not deleted:
+        raise HTTPException(
+            status_code=404,
+            detail="Organization member not found",
+        )
+
+    return {
+        "status": "member removed",
+        "organization_id": str(organization_id),
+        "user_id": str(user_id),
     }
