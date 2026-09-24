@@ -32,3 +32,9 @@ Thumbs.db
 
 # Logs
 *.log
+
+# Hardhat build outputs
+packages/contracts/artifacts/
+packages/contracts/cache/
+packages/contracts/coverage/
+packages/contracts/typechain-types/

@@ -1,4 +1,18 @@
 {
+  "name": "impactledger",
+  "private": true,
+  "version": "0.2.0",
+  "description": "ImpactLedger monorepo — see IMPACTLEDGER_RULEBOOK_v1.0.md",
+  "workspaces": [
+    "apps/web",
+    "packages/*"
+  ],
+  "scripts": {
+    "web:dev": "npm --workspace apps/web run dev",
+    "web:build": "npm --workspace apps/web run build",
+    "contracts:test": "npm --workspace packages/contracts run test",
+    "contracts:compile": "npm --workspace packages/contracts run compile"
+  },
   "devDependencies": {
     "supabase": "^2.116.0"
   }
