@@ -1,6 +1,7 @@
 """Persistence for anchor batches (migration 017)."""
 from __future__ import annotations
 
+from collections.abc import Callable, Sequence
 from dataclasses import dataclass
 from datetime import datetime
 from uuid import UUID, uuid4
@@ -34,37 +35,47 @@ class AnchorBatchRow:
     created_at: datetime
 
 
-def fetch_pending_events(organization_id: UUID, max_events: int) -> list[PendingEvent]:
-    with psycopg.connect(settings.database_url) as connection:
-        with connection.cursor() as cursor:
-            cursor.execute(
-                """
-                SELECT id, hash, seq
-                  FROM domain_events
-                 WHERE organization_id = %s
-                   AND anchor_status = 'PENDING'
-                 ORDER BY seq ASC
-                 LIMIT %s
-                """,
-                (organization_id, max_events),
-            )
-            rows = cursor.fetchall()
-    return [PendingEvent(id=r[0], hash=r[1], seq=r[2]) for r in rows]
-
-
 def create_batch(
     organization_id: UUID,
-    events: list[PendingEvent],
-    merkle_root_hex: str,
+    max_events: int,
     chain_id: int,
     contract_address: str | None,
-) -> AnchorBatchRow:
-    """Atomically create the batch row, insert item links, and flip member
-    events to BATCHED."""
+    merkle_root: Callable[[Sequence[str]], str],
+) -> AnchorBatchRow | None:
+    """Atomically lock eligible events and persist a batch and its item links."""
     batch_id = uuid4()
     with psycopg.connect(settings.database_url) as connection:
         with connection.transaction():
             with connection.cursor() as cursor:
+                cursor.execute(
+                    """
+                    SELECT e.id, e.hash, e.seq
+                      FROM domain_events e
+                      WHERE e.organization_id = %s
+                        AND NOT EXISTS (
+                           SELECT 1
+                             FROM anchor_batch_items item
+                             JOIN anchor_batches batch
+                               ON batch.id = item.anchor_batch_id
+                              AND batch.organization_id = item.organization_id
+                            WHERE item.domain_event_id = e.id
+                              AND item.organization_id = e.organization_id
+                              AND batch.status <> 'FAILED'
+                       )
+                     ORDER BY e.seq ASC
+                     LIMIT %s
+                     FOR UPDATE OF e SKIP LOCKED
+                    """,
+                    (organization_id, max_events),
+                )
+                events = [
+                    PendingEvent(id=row[0], hash=row[1], seq=row[2])
+                    for row in cursor.fetchall()
+                ]
+                if not events:
+                    return None
+
+                merkle_root_hex = merkle_root([event.hash for event in events])
                 cursor.execute(
                     """
                     INSERT INTO anchor_batches (
@@ -96,15 +107,6 @@ def create_batch(
                         ) VALUES (%s, %s, %s, %s, %s)
                         """,
                         (organization_id, batch_id, ev.id, idx, ev.hash),
-                    )
-                    cursor.execute(
-                        """
-                        UPDATE domain_events
-                           SET anchor_status = 'BATCHED',
-                               anchor_batch_id = %s
-                         WHERE id = %s AND organization_id = %s
-                        """,
-                        (batch_id, ev.id, organization_id),
                     )
     return AnchorBatchRow(*row)
 
@@ -146,14 +148,6 @@ def mark_confirmed(batch_id: UUID, block_number: int) -> None:
                     """,
                     (block_number, batch_id),
                 )
-                cursor.execute(
-                    """
-                    UPDATE domain_events
-                       SET anchor_status = 'ANCHORED'
-                     WHERE anchor_batch_id = %s
-                    """,
-                    (batch_id,),
-                )
 
 
 def mark_failed(batch_id: UUID, reason: str) -> None:
@@ -168,15 +162,6 @@ def mark_failed(batch_id: UUID, reason: str) -> None:
                      WHERE id = %s
                     """,
                     (reason, batch_id),
-                )
-                cursor.execute(
-                    """
-                    UPDATE domain_events
-                       SET anchor_status = 'PENDING',
-                           anchor_batch_id = NULL
-                     WHERE anchor_batch_id = %s
-                    """,
-                    (batch_id,),
                 )
 
 

@@ -10,7 +10,9 @@ const LEAF_PREFIX = new Uint8Array([0x00]);
 const NODE_PREFIX = new Uint8Array([0x01]);
 
 async function sha256(bytes: Uint8Array): Promise<Uint8Array> {
-    const buf = await crypto.subtle.digest("SHA-256", bytes);
+    const input = new ArrayBuffer(bytes.byteLength);
+    new Uint8Array(input).set(bytes);
+    const buf = await crypto.subtle.digest("SHA-256", input);
     return new Uint8Array(buf);
 }
 

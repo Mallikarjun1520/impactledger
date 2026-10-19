@@ -28,6 +28,44 @@ npm install
 npx hardhat test
 ```
 
+Before starting FastAPI for local development, set `SUPABASE_URL`,
+`SUPABASE_ANON_KEY`, `SUPABASE_SERVICE_ROLE_KEY`, `SUPABASE_JWT_SECRET`, and
+`DATABASE_URL` from the local `supabase status -o env` output. Confirm that the
+Supabase API is on loopback port 54321 and PostgreSQL is on loopback port 54322;
+process environment values override `apps/api/.env`, which may contain hosted
+deployment settings.
+
+### Local development without Docker log collection
+
+Supabase's optional `vector` and `logflare` services collect container logs
+through the Docker Engine API; they are not required for the database, Auth,
+Storage, API, or frontend. On Docker Desktop installations that expose the
+Engine only through a named pipe, Vector's configured
+`host.docker.internal:2375` TCP endpoint is unavailable. Start the required
+services without the optional log collector using the Supabase CLI's supported
+exclude flag:
+
+```bash
+npm exec -- supabase start --exclude vector,logflare
+```
+
+### Live database RLS integration tests
+
+These tests connect to and exercise policies in the local Supabase PostgreSQL
+instance. They skip unless the dedicated test URL is set; they reject any
+database URL that is not the local loopback endpoint on port 54322. Each test
+uses isolated rows and rolls them back. The relief-lifecycle test exercises
+FastAPI routes against that same database inside one rollback transaction.
+
+```bash
+# Start local Supabase first, then from the repository root:
+cd apps/api
+# PowerShell:
+$env:IMPACTLEDGER_RLS_TEST_DATABASE_URL = "postgresql://postgres:postgres@127.0.0.1:54322/postgres"
+$env:IMPACTLEDGER_LIFECYCLE_TEST_DATABASE_URL = $env:IMPACTLEDGER_RLS_TEST_DATABASE_URL
+python -m pytest -q tests/test_rls_integration.py tests/test_relief_lifecycle_integration.py
+```
+
 Or with docker-compose from repo root:
 
 ```bash

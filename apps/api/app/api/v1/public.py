@@ -1,18 +1,37 @@
 """Public projection endpoints. No auth required. Backed by the sanitized
-views from migration 021."""
-from fastapi import APIRouter, HTTPException
+views from migration 022."""
+import logging
+
 import psycopg
+from fastapi import APIRouter, HTTPException
 
 from app.core.config import settings
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/public", tags=["public"])
 
 
 def _rows(sql: str, args: tuple = ()) -> list[dict]:
-    with psycopg.connect(settings.database_url) as conn:
-        with conn.cursor(row_factory=psycopg.rows.dict_row) as cur:
+    """Run a read-only query against the sanitized public views.
+
+    A database failure must be surfaced as an explicit service error rather
+    than an empty result so callers cannot mistake an outage for a genuine
+    zero total. The detail returned to clients is intentionally generic; the
+    underlying SQL error is logged server-side only.
+    """
+    try:
+        with psycopg.connect(settings.database_url) as conn, conn.cursor(
+            row_factory=psycopg.rows.dict_row
+        ) as cur:
             cur.execute(sql, args)
             return cur.fetchall()
+    except psycopg.Error:
+        logger.exception("Public transparency query failed")
+        raise HTTPException(
+            status_code=503,
+            detail="Public transparency data is temporarily unavailable",
+        ) from None
 
 
 @router.get("/organizations/{org_slug}/initiatives")

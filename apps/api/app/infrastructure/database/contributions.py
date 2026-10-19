@@ -4,6 +4,7 @@ import psycopg
 
 from app.api.v1.schemas import ContributionCreate
 from app.core.config import settings
+from app.infrastructure.database.audit_logs import insert_audit_event
 
 
 def create_contribution(
@@ -41,10 +42,24 @@ def create_contribution(
             )
             row = cursor.fetchone()
             columns = [col.name for col in cursor.description]
+            contribution = dict(zip(columns, row))
+            insert_audit_event(
+                cursor,
+                organization_id=organization_id,
+                event_type="ADMIN_ACTION",
+                user_id=user_id,
+                details={
+                    "action": "CONTRIBUTION_RECORDED",
+                    "entity_type": "contribution",
+                    "entity_id": str(contribution["id"]),
+                    "amount": str(data.amount),
+                    "currency": data.currency,
+                },
+            )
 
         connection.commit()
 
-    return dict(zip(columns, row))
+    return contribution
 
 
 def list_contributions(organization_id: UUID) -> list[dict]:

@@ -10,6 +10,7 @@ from app.core.exceptions import (
     MemberAlreadyExistsError,
     OrganizationNotFoundError,
 )
+from app.infrastructure.database.audit_logs import insert_audit_event
 
 
 @dataclass(frozen=True)
@@ -72,6 +73,7 @@ def list_organization_members(
 def add_organization_member(
     organization_id: UUID,
     data: OrganizationMemberCreate,
+    actor_user_id: UUID | None = None,
 ) -> OrganizationMembership:
     with psycopg.connect(settings.database_url) as connection:
         with connection.cursor() as cursor:
@@ -127,6 +129,20 @@ def add_organization_member(
             if row is None:
                 raise RuntimeError("Failed to create organization membership")
 
+            if actor_user_id is not None:
+                insert_audit_event(
+                    cursor,
+                    organization_id=organization_id,
+                    event_type="MEMBER_ADDED",
+                    user_id=actor_user_id,
+                    subject_user_id=data.user_id,
+                    details={
+                        "entity_type": "organization_member",
+                        "entity_id": str(data.user_id),
+                        "role": row[2],
+                    },
+                )
+
             return OrganizationMembership(
                 organization_id=row[0],
                 user_id=row[1],
@@ -138,6 +154,7 @@ def update_organization_member(
     organization_id: UUID,
     user_id: UUID,
     role: OrganizationRole,
+    actor_user_id: UUID | None = None,
 ) -> OrganizationMembership | None:
     with psycopg.connect(settings.database_url) as connection:
         with connection.cursor() as cursor:
@@ -206,6 +223,21 @@ def update_organization_member(
 
             row = cursor.fetchone()
 
+            if actor_user_id is not None and row is not None and current_role != row[2]:
+                insert_audit_event(
+                    cursor,
+                    organization_id=organization_id,
+                    event_type="MEMBER_ROLE_CHANGED",
+                    user_id=actor_user_id,
+                    subject_user_id=user_id,
+                    details={
+                        "entity_type": "organization_member",
+                        "entity_id": str(user_id),
+                        "old_role": current_role,
+                        "new_role": row[2],
+                    },
+                )
+
     if row is None:
         return None
 
@@ -219,6 +251,7 @@ def update_organization_member(
 def delete_organization_member(
     organization_id: UUID,
     user_id: UUID,
+    actor_user_id: UUID | None = None,
 ) -> bool:
     with psycopg.connect(settings.database_url) as connection:
         with connection.cursor() as cursor:
@@ -277,4 +310,17 @@ def delete_organization_member(
                 """,
                 (organization_id, user_id),
             )
+            if actor_user_id is not None:
+                insert_audit_event(
+                    cursor,
+                    organization_id=organization_id,
+                    event_type="MEMBER_REMOVED",
+                    user_id=actor_user_id,
+                    subject_user_id=user_id,
+                    details={
+                        "entity_type": "organization_member",
+                        "entity_id": str(user_id),
+                        "role": current_role,
+                    },
+                )
             return True

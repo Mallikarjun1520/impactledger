@@ -15,6 +15,7 @@ from app.core.exceptions import (
     ResourceBatchNotFoundError,
     ResourceTypeNotFoundError,
 )
+from app.infrastructure.database.audit_logs import insert_audit_event
 
 
 # ---------------------------------------------------------------------------
@@ -118,6 +119,31 @@ def create_resource_batch(
                     "Resource type not found or does not belong to organization"
                 )
 
+            initiative_id = None
+            if data.purchase_order_id is not None:
+                cursor.execute(
+                    """
+                    SELECT a.initiative_id
+                      FROM purchase_orders po
+                      JOIN commitments cm
+                        ON cm.id = po.commitment_id
+                       AND cm.organization_id = po.organization_id
+                      JOIN allocations a
+                        ON a.id = cm.allocation_id
+                       AND a.organization_id = cm.organization_id
+                     WHERE po.id = %s
+                       AND po.organization_id = %s
+                       AND po.status IN ('APPROVED', 'RECEIVED')
+                    """,
+                    (data.purchase_order_id, organization_id),
+                )
+                purchase_order = cursor.fetchone()
+                if purchase_order is None:
+                    raise ValueError(
+                        "Purchase order not found, not approved, or does not belong to organization"
+                    )
+                initiative_id = purchase_order[0]
+
             # 2. Insert resource batch
             try:
                 cursor.execute(
@@ -125,17 +151,21 @@ def create_resource_batch(
                     INSERT INTO resource_batches (
                         resource_type_id,
                         organization_id,
+                        purchase_order_id,
                         batch_code,
                         quantity,
                         source_description,
                         location
                     )
-                    VALUES (%s, %s, %s, %s, %s, %s)
-                    RETURNING id, resource_type_id, organization_id, batch_code, quantity, source_description, received_at, location, created_at, updated_at
+                    VALUES (%s, %s, %s, %s, %s, %s, %s)
+                    RETURNING id, resource_type_id, organization_id, purchase_order_id,
+                              batch_code, quantity, source_description, received_at,
+                              location, created_at, updated_at
                     """,
                     (
                         data.resource_type_id,
                         organization_id,
+                        data.purchase_order_id,
                         data.batch_code,
                         data.quantity,
                         data.source_description,
@@ -155,6 +185,9 @@ def create_resource_batch(
             cursor.execute(
                 """
                 INSERT INTO resource_events (
+                    organization_id,
+                    initiative_id,
+                    purchase_order_id,
                     resource_batch_id,
                     event_type,
                     quantity,
@@ -162,15 +195,33 @@ def create_resource_batch(
                     performed_by,
                     reason
                 )
-                VALUES (%s, 'RECEIVED', %s, %s, %s, %s)
+                VALUES (%s, %s, %s, %s, 'RECEIVED', %s, %s, %s, %s)
                 """,
                 (
+                    organization_id,
+                    initiative_id,
+                    data.purchase_order_id,
                     batch_data["id"],
                     data.quantity,
                     data.location or "Default",
                     user_id,
                     "Initial batch receipt",
                 ),
+            )
+            insert_audit_event(
+                cursor,
+                organization_id=organization_id,
+                event_type="ADMIN_ACTION",
+                user_id=user_id,
+                details={
+                    "action": "RESOURCE_RECEIVED",
+                    "entity_type": "resource_batch",
+                    "entity_id": str(batch_data["id"]),
+                    "purchase_order_id": (
+                        str(data.purchase_order_id) if data.purchase_order_id else None
+                    ),
+                    "quantity": str(data.quantity),
+                },
             )
 
         connection.commit()
@@ -183,7 +234,9 @@ def list_resource_batches(organization_id: UUID) -> list[dict]:
         with connection.cursor() as cursor:
             cursor.execute(
                 """
-                SELECT id, resource_type_id, organization_id, batch_code, quantity, source_description, received_at, location, created_at, updated_at
+                SELECT id, resource_type_id, organization_id, purchase_order_id,
+                       batch_code, quantity, source_description, received_at,
+                       location, created_at, updated_at
                 FROM resource_batches
                 WHERE organization_id = %s
                 ORDER BY created_at DESC
@@ -201,7 +254,9 @@ def get_resource_batch(organization_id: UUID, batch_id: UUID) -> dict | None:
         with connection.cursor() as cursor:
             cursor.execute(
                 """
-                SELECT id, resource_type_id, organization_id, batch_code, quantity, source_description, received_at, location, created_at, updated_at
+                SELECT id, resource_type_id, organization_id, purchase_order_id,
+                       batch_code, quantity, source_description, received_at,
+                       location, created_at, updated_at
                 FROM resource_batches
                 WHERE id = %s AND organization_id = %s
                 """,
@@ -284,6 +339,7 @@ def create_resource_event(
             cursor.execute(
                 """
                 INSERT INTO resource_events (
+                    organization_id,
                     resource_batch_id,
                     event_type,
                     quantity,
@@ -292,10 +348,11 @@ def create_resource_event(
                     reason,
                     transfer_id
                 )
-                VALUES (%s, %s, %s, %s, %s, %s, %s)
+                VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
                 RETURNING id, resource_batch_id, event_type, quantity, location, performed_by, reason, transfer_id, created_at
                 """,
                 (
+                    organization_id,
                     data.resource_batch_id,
                     data.event_type.value,
                     data.quantity,
@@ -307,6 +364,18 @@ def create_resource_event(
             )
             row = cursor.fetchone()
             columns = [col.name for col in cursor.description]
+            insert_audit_event(
+                cursor,
+                organization_id=organization_id,
+                event_type="ADMIN_ACTION",
+                user_id=performed_by,
+                details={
+                    "action": f"RESOURCE_{data.event_type.value}",
+                    "entity_type": "resource_batch",
+                    "entity_id": str(data.resource_batch_id),
+                    "quantity": str(data.quantity),
+                },
+            )
 
         connection.commit()
 

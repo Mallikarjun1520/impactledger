@@ -135,6 +135,7 @@ def add_member_endpoint(
         member = add_organization_member(
             organization_id=organization_id,
             data=data,
+            actor_user_id=membership.user_id,
         )
 
         return {
@@ -186,6 +187,7 @@ def update_member_endpoint(
             organization_id=organization_id,
             user_id=user_id,
             role=data.role,
+            actor_user_id=membership.user_id,
         )
     except LastAdminError as error:
         raise HTTPException(
@@ -228,6 +230,7 @@ def delete_member_endpoint(
         deleted = delete_organization_member(
             organization_id=organization_id,
             user_id=user_id,
+            actor_user_id=membership.user_id,
         )
     except LastAdminError as error:
         raise HTTPException(

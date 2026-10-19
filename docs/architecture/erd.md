@@ -3,7 +3,7 @@
 Source of truth: `IMPACTLEDGER_RULEBOOK_v1.0.md`.
 This ERD is the concrete implementation of the rulebook's entity vocabulary. Every
 tenant-owned entity carries `organization_id`; every write path is guarded by
-RLS (`supabase/migrations/020_rls_policies.sql`).
+RLS (`supabase/migrations/021_rls_policies.sql`).
 
 ## Legend
 
@@ -111,14 +111,14 @@ add a new event with `CORRECTS`/`REVERSES` provenance.
 ## Cross-tenant integrity
 
 Every child FK to a tenant-owned parent uses the composite `(id, organization_id)`
-pattern established in migration `010`. New tables in migrations 011–019 follow
+pattern established in migration `010`. New tables in migrations 012–019 follow
 the same rule (see `010_harden_tenant_foreign_keys.sql` for the canonical
 example). This makes it impossible for a malicious or buggy client to reference
 another org's row even if it slips past application checks.
 
 ## Public projection
 
-`public_initiative_summary` (view, migration `021`) exposes only sanitized
+`public_initiative_summary` (view, migration `022`) exposes only sanitized
 aggregates: totals, remaining amounts, quantity in/out, reconciliation status,
 and material discrepancies. PII, bank details, private evidence bytes, and
 internal notes are excluded by construction.

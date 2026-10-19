@@ -32,6 +32,7 @@ def close_batch(
         contract_address=settings.anchor_contract_address,
         chain_id=settings.anchor_chain_id,
         max_events=settings.anchor_max_pending_events,
+        performed_by=membership.user_id,
     )
     if batch is None:
         raise HTTPException(status_code=409, detail="No pending events or submission failed")
@@ -58,7 +59,12 @@ def confirm(
 ) -> AnchorBatchResponse:
     if membership.organization_id != org_id:
         raise HTTPException(status_code=403, detail="Org mismatch")
+    if membership.role not in ("ADMIN", "AUDITOR", "OPERATOR"):
+        raise HTTPException(status_code=403, detail="Insufficient role")
 
+    batch = anchor_db.get_batch(batch_id)
+    if batch is None or batch.organization_id != org_id:
+        raise HTTPException(status_code=404, detail="Batch not found")
     anchor_service.confirm_batch(batch_id, settings.anchor_confirmations_required)
     batch = anchor_db.get_batch(batch_id)
     if batch is None or batch.organization_id != org_id:

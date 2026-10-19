@@ -6,17 +6,14 @@ import pytest
 
 from app.api.v1.schemas import OrganizationMemberCreate, OrganizationRole
 from app.core.exceptions import (
-    DuplicateSlugError,
     LastAdminError,
     MemberAlreadyExistsError,
-    OrganizationNotFoundError,
 )
 from app.infrastructure.database.organization_members import (
     add_organization_member,
     delete_organization_member,
     update_organization_member,
 )
-from app.infrastructure.database.organizations import create_organization
 
 
 class _MockContextManager:
@@ -160,3 +157,35 @@ def test_db_add_member_duplicate_raises_error():
                 org_id,
                 OrganizationMemberCreate(user_id=user_id, role=OrganizationRole.VIEWER),
             )
+
+
+def test_db_add_member_writes_typed_audit_event_in_operation_transaction():
+    org_id = uuid4()
+    user_id = uuid4()
+    actor_id = uuid4()
+    mock_cursor = MagicMock()
+    mock_cursor.fetchone.side_effect = [
+        (org_id,),
+        (user_id,),
+        (org_id, user_id, "VIEWER"),
+    ]
+    mock_conn = MagicMock()
+    mock_conn.cursor.return_value = _MockContextManager(mock_cursor)
+
+    with (
+        patch("psycopg.connect", return_value=_MockContextManager(mock_conn)),
+        patch(
+            "app.infrastructure.database.organization_members.insert_audit_event"
+        ) as audit_writer,
+    ):
+        result = add_organization_member(
+            org_id,
+            OrganizationMemberCreate(user_id=user_id, role=OrganizationRole.VIEWER),
+            actor_user_id=actor_id,
+        )
+
+    assert result.user_id == user_id
+    audit_writer.assert_called_once()
+    assert audit_writer.call_args.kwargs["event_type"] == "MEMBER_ADDED"
+    assert audit_writer.call_args.kwargs["user_id"] == actor_id
+    assert audit_writer.call_args.kwargs["subject_user_id"] == user_id

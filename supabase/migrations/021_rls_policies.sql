@@ -11,10 +11,12 @@
 CREATE OR REPLACE FUNCTION is_org_member(org UUID)
 RETURNS BOOLEAN
 LANGUAGE sql STABLE
+SECURITY DEFINER
+SET search_path = pg_catalog
 AS $$
     SELECT EXISTS (
         SELECT 1
-          FROM organization_members m
+          FROM public.organization_members m
          WHERE m.organization_id = org
            AND m.user_id = auth.uid()
     );
@@ -23,10 +25,12 @@ $$;
 CREATE OR REPLACE FUNCTION is_org_role(org UUID, roles TEXT[])
 RETURNS BOOLEAN
 LANGUAGE sql STABLE
+SECURITY DEFINER
+SET search_path = pg_catalog
 AS $$
     SELECT EXISTS (
         SELECT 1
-          FROM organization_members m
+          FROM public.organization_members m
          WHERE m.organization_id = org
            AND m.user_id = auth.uid()
            AND m.role::TEXT = ANY (roles)

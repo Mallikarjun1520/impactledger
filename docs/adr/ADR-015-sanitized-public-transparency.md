@@ -13,7 +13,7 @@ make an org look better.
 
 ## Decision
 
-The public surface is a set of read-only Postgres views (migration `021`)
+The public surface is a set of read-only Postgres views (migration `022`)
 that:
 
 - Aggregate contributions to totals + anonymized counts unless the donor

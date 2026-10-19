@@ -8,7 +8,6 @@
 DO $$
 DECLARE
     v_org UUID;
-    v_init_relief UUID;
     v_init_medical UUID;
     v_pool_unrestricted UUID;
     v_pool_medical UUID;
@@ -26,8 +25,7 @@ BEGIN
     INSERT INTO initiatives (organization_id, name, slug, category, status, starts_at)
     VALUES
       (v_org, 'Flood Relief 2026', 'flood-relief-2026', 'shelter', 'ACTIVE', NOW()),
-      (v_org, 'Medical Support Program', 'medical-support', 'medical', 'ACTIVE', NOW())
-    RETURNING id INTO v_init_relief;
+      (v_org, 'Medical Support Program', 'medical-support', 'medical', 'ACTIVE', NOW());
 
     SELECT id INTO v_init_medical
       FROM initiatives

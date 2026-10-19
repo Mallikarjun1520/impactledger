@@ -10,5 +10,4 @@ ALTER TABLE allocations
     CHECK (
         (contribution_id IS NOT NULL AND fund_pool_id IS NULL)
      OR (contribution_id IS NULL     AND fund_pool_id IS NOT NULL)
-     OR (contribution_id IS NOT NULL AND fund_pool_id IS NOT NULL)
     );

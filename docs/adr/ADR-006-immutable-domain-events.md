@@ -15,7 +15,7 @@ auditor trail all rest on the append-only property.
 
 1. Application code: no ORM `UPDATE` / `DELETE` paths for the table.
 2. DB trigger `domain_events_forbid_mutation` that raises on any
-   `UPDATE`/`DELETE` (migration `019`).
+   `UPDATE`/`DELETE` (migration `020`).
 3. RLS: no role has UPDATE/DELETE grants on `domain_events`.
 
 Corrections and reversals are represented as **new** events with a

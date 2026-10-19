@@ -1,13 +1,10 @@
+import type { Metadata } from "next";
 import Link from "next/link";
 
 interface Summary {
-    initiative_id: string;
-    org_slug: string;
     org_name: string;
-    initiative_slug: string;
     initiative_name: string;
     description: string | null;
-    category: string | null;
     status: string;
     contribution_count: number;
     contribution_total: string;
@@ -40,12 +37,8 @@ interface AnchorRow {
     merkle_root: string;
     event_count: number;
     chain_id: number;
-    contract_address: string | null;
-    tx_hash: string | null;
-    block_number: number | null;
     status: string;
-    submitted_at: string | null;
-    confirmed_at: string | null;
+    tx_hash: string | null;
 }
 
 interface PageData {
@@ -55,179 +48,323 @@ interface PageData {
     anchor_batches: AnchorRow[];
 }
 
-// Next 16's dynamic route props expose params as a Promise.
-type PageProps = { params: Promise<{ org: string; initiative: string }> };
+type FetchResult =
+    | { kind: "ok"; data: PageData }
+    | { kind: "not-found" }
+    | { kind: "error"; status: number | null };
 
-async function fetchDetail(org: string, initiative: string): Promise<PageData | null> {
+async function fetchDetail(org: string, initiative: string): Promise<FetchResult> {
     const base = process.env.NEXT_PUBLIC_API_BASE_URL ?? "http://localhost:8000";
     try {
         const res = await fetch(
             `${base}/api/v1/public/organizations/${encodeURIComponent(org)}/initiatives/${encodeURIComponent(initiative)}`,
             { cache: "no-store" },
         );
-        if (!res.ok) return null;
-        return (await res.json()) as PageData;
+        if (res.status === 404) return { kind: "not-found" };
+        if (!res.ok) return { kind: "error", status: res.status };
+        return { kind: "ok", data: (await res.json()) as PageData };
     } catch {
-        return null;
+        return { kind: "error", status: null };
     }
 }
 
-export default async function InitiativePublicPage({ params }: PageProps) {
+export async function generateMetadata({
+    params,
+}: {
+    params: Promise<{ org: string; initiative: string }>;
+}): Promise<Metadata> {
     const { org, initiative } = await params;
-    const data = await fetchDetail(org, initiative);
+    return {
+        title: `${initiative} · ${org}`,
+        description: `Public transparency record for ${initiative} published by ${org}.`,
+    };
+}
 
-    if (!data) {
+function anchorBadgeClass(status: string): string {
+    const s = status.toLowerCase();
+    if (s.includes("confirm") || s.includes("anchor") || s.includes("success")) {
+        return "badge badge-ok";
+    }
+    if (s.includes("fail") || s.includes("error")) {
+        return "badge badge-danger";
+    }
+    if (s.includes("pend") || s.includes("queue")) {
+        return "badge badge-warn";
+    }
+    return "badge badge-neutral";
+}
+
+export default async function InitiativePublicPage({
+    params,
+}: {
+    params: Promise<{ org: string; initiative: string }>;
+}) {
+    const { org, initiative } = await params;
+    const result = await fetchDetail(org, initiative);
+
+    if (result.kind === "not-found") {
         return (
-            <main className="mx-auto max-w-3xl px-6 py-16">
+            <main className="container-x py-16">
                 <h1 className="text-2xl font-semibold">Initiative not found</h1>
-                <p className="mt-3 text-sm text-zinc-600 dark:text-zinc-400">
-                    Either the initiative does not exist, or the backend at{" "}
-                    <code>NEXT_PUBLIC_API_BASE_URL</code> is not reachable.
+                <p className="mt-3 text-sm" style={{ color: "var(--text-muted)" }}>
+                    No public transparency record exists for this organization and
+                    initiative.
                 </p>
-                <Link href="/" className="mt-6 inline-block text-sm underline">
-                    ← Back to home
+                <Link href="/" className="btn btn-secondary mt-6">
+                    Back to home
                 </Link>
             </main>
         );
     }
 
-    const { summary, resources, reconciliation_flags, anchor_batches } = data;
+    if (result.kind === "error") {
+        return (
+            <main className="container-x py-16">
+                <div className="alert alert-danger max-w-2xl" role="alert">
+                    <span aria-hidden="true">⚠</span>
+                    <div>
+                        <h1 className="text-lg font-semibold">
+                            Transparency data unavailable
+                        </h1>
+                        <p className="mt-1 text-sm">
+                            We could not load this initiative&apos;s public
+                            transparency record
+                            {result.status ? ` (HTTP ${result.status})` : ""}. This
+                            is not the same as saying there are no records — the data
+                            may exist but could not be retrieved.
+                        </p>
+                    </div>
+                </div>
+                <Link href="/" className="btn btn-secondary mt-6">
+                    Back to home
+                </Link>
+            </main>
+        );
+    }
+
+    const { summary, resources, reconciliation_flags, anchor_batches } =
+        result.data;
 
     return (
-        <main className="mx-auto max-w-5xl px-6 py-12">
-            <p className="text-sm text-zinc-500">
-                <Link href="/" className="hover:underline">ImpactLedger</Link>
-                {" / "}
-                {summary.org_name}
-            </p>
-            <h1 className="mt-2 text-3xl font-semibold tracking-tight">
-                {summary.initiative_name}
-            </h1>
-            {summary.description && (
-                <p className="mt-3 max-w-3xl text-zinc-600 dark:text-zinc-400">
-                    {summary.description}
-                </p>
-            )}
-            <div className="mt-2 inline-block rounded-full bg-zinc-900 px-3 py-1 text-xs uppercase tracking-wider text-white dark:bg-white dark:text-zinc-900">
-                {summary.status}
-            </div>
+        <main className="container-x py-10">
+            <nav className="text-sm" aria-label="Breadcrumb">
+                <Link href="/" className="hover:underline" style={{ color: "var(--text-muted)" }}>
+                    ImpactLedger
+                </Link>
+                <span aria-hidden="true" style={{ color: "var(--text-subtle)" }}>
+                    {" / "}
+                </span>
+                <span style={{ color: "var(--text-muted)" }}>{summary.org_name}</span>
+            </nav>
 
-            <section className="mt-10 grid gap-6 sm:grid-cols-2 lg:grid-cols-4">
-                <Stat label="Contributions" value={summary.contribution_total} count={summary.contribution_count} />
-                <Stat label="Allocated" value={summary.allocated_total} />
-                <Stat label="Paid" value={summary.paid_total} />
-                <Stat label="Unallocated" value={summary.unallocated_total} />
+            <header className="mt-3">
+                <div className="flex flex-wrap items-center gap-3">
+                    <h1 className="text-3xl font-semibold tracking-tight">
+                        {summary.initiative_name}
+                    </h1>
+                    <span className="badge badge-neutral">{summary.status}</span>
+                </div>
+                {summary.description && (
+                    <p className="mt-3 max-w-3xl" style={{ color: "var(--text-muted)" }}>
+                        {summary.description}
+                    </p>
+                )}
+                <p className="mt-2 text-sm" style={{ color: "var(--text-subtle)" }}>
+                    Published by {summary.org_name}
+                </p>
+            </header>
+
+            <section aria-labelledby="summary-heading" className="mt-8">
+                <h2 id="summary-heading" className="sr-only">
+                    Financial summary
+                </h2>
+                <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
+                    <Stat
+                        label="Contributions"
+                        value={summary.contribution_total}
+                        hint={`${summary.contribution_count.toLocaleString()} recorded entries`}
+                    />
+                    <Stat label="Allocated" value={summary.allocated_total} />
+                    <Stat label="Paid" value={summary.paid_total} />
+                    <Stat
+                        label="Unallocated"
+                        value={summary.unallocated_total}
+                        hint={`${summary.allocation_pct}% of contributions allocated`}
+                    />
+                </div>
+                <p className="help mt-3">
+                    Totals reflect what was recorded. A large unallocated figure
+                    means funds are received but not yet committed — not that they
+                    are missing.
+                </p>
             </section>
 
-            <section className="mt-14">
-                <h2 className="text-xl font-semibold">Physical resources</h2>
+            <section aria-labelledby="resources-heading" className="mt-12">
+                <h2 id="resources-heading" className="text-xl font-semibold">
+                    Physical resources
+                </h2>
                 {resources.length === 0 ? (
-                    <p className="mt-3 text-sm text-zinc-500">No resource movements recorded yet.</p>
+                    <p className="mt-3 text-sm" style={{ color: "var(--text-muted)" }}>
+                        No resource movements recorded yet.
+                    </p>
                 ) : (
-                    <table className="mt-4 w-full text-sm">
-                        <thead className="text-left text-xs uppercase text-zinc-500">
-                            <tr>
-                                <th className="py-2">Resource</th>
-                                <th>Unit</th>
-                                <th className="text-right">Received</th>
-                                <th className="text-right">Distributed</th>
-                                <th className="text-right">Lost/Damaged/Disposed</th>
-                            </tr>
-                        </thead>
-                        <tbody>
-                            {resources.map((r) => (
-                                <tr key={r.resource_name} className="border-t border-zinc-200 dark:border-zinc-800">
-                                    <td className="py-2">{r.resource_name}</td>
-                                    <td>{r.unit}</td>
-                                    <td className="text-right">{r.received}</td>
-                                    <td className="text-right">{r.distributed}</td>
-                                    <td className="text-right">
-                                        {Number(r.lost) + Number(r.damaged) + Number(r.disposed)}
-                                    </td>
+                    <div className="card mt-4 overflow-x-auto">
+                        <table className="data-table">
+                            <thead>
+                                <tr>
+                                    <th scope="col">Resource</th>
+                                    <th scope="col">Unit</th>
+                                    <th scope="col" className="num">
+                                        Received
+                                    </th>
+                                    <th scope="col" className="num">
+                                        Distributed
+                                    </th>
+                                    <th scope="col" className="num">
+                                        Lost / damaged / disposed
+                                    </th>
                                 </tr>
-                            ))}
-                        </tbody>
-                    </table>
+                            </thead>
+                            <tbody>
+                                {resources.map((r) => (
+                                    <tr key={r.resource_name}>
+                                        <td>{r.resource_name}</td>
+                                        <td>{r.unit}</td>
+                                        <td className="num">{r.received}</td>
+                                        <td className="num">{r.distributed}</td>
+                                        <td className="num">
+                                            {Number(r.lost) +
+                                                Number(r.damaged) +
+                                                Number(r.disposed)}
+                                        </td>
+                                    </tr>
+                                ))}
+                            </tbody>
+                        </table>
+                    </div>
                 )}
             </section>
 
-            <section className="mt-14">
-                <h2 className="text-xl font-semibold">Reconciliation flags</h2>
-                <p className="mt-1 text-sm text-zinc-500">
-                    Rulebook Rule 08 — discrepancies remain visible.
+            <section aria-labelledby="flags-heading" className="mt-12">
+                <h2 id="flags-heading" className="text-xl font-semibold">
+                    Reconciliation flags
+                </h2>
+                <p className="help mt-1">
+                    Discrepancies between recorded and expected figures remain
+                    visible. Rulebook Rule 08.
                 </p>
                 {reconciliation_flags.length === 0 ? (
-                    <p className="mt-3 text-sm text-zinc-500">No reconciliation flags.</p>
+                    <p className="mt-3 text-sm" style={{ color: "var(--text-muted)" }}>
+                        No reconciliation flags recorded.
+                    </p>
                 ) : (
-                    <ul className="mt-4 space-y-2">
+                    <ul className="mt-4 flex flex-col gap-2">
                         {reconciliation_flags.map((f) => (
-                            <li key={f.event_id} className="rounded-lg border border-amber-300 bg-amber-50 p-3 text-sm dark:border-amber-800 dark:bg-amber-950/40">
-                                <span className="font-medium">{f.event_type}</span>
-                                {" — "}
-                                qty {f.quantity}
-                                {f.reason ? ` (${f.reason})` : ""}{" "}
-                                <span className="text-xs text-zinc-500">{f.created_at}</span>
+                            <li key={f.event_id} className="alert alert-warn">
+                                <span aria-hidden="true">!</span>
+                                <div>
+                                    <p className="font-medium text-sm">{f.event_type}</p>
+                                    <p className="text-sm">
+                                        Quantity {f.quantity}
+                                        {f.reason ? ` — ${f.reason}` : ""}
+                                    </p>
+                                    <p className="help mono">{f.created_at}</p>
+                                </div>
                             </li>
                         ))}
                     </ul>
                 )}
             </section>
 
-            <section className="mt-14">
-                <h2 className="text-xl font-semibold">Cryptographic anchors</h2>
-                <p className="mt-1 text-sm text-zinc-500">
-                    Rulebook §22 — Merkle roots anchored to Base Sepolia.
+            <section aria-labelledby="anchors-heading" className="mt-12">
+                <h2 id="anchors-heading" className="text-xl font-semibold">
+                    Cryptographic anchors
+                </h2>
+                <p className="help mt-1">
+                    Merkle roots anchored to Base Sepolia. Anchoring shows a record
+                    has not changed since it was anchored — not that it is true.
                 </p>
                 {anchor_batches.length === 0 ? (
-                    <p className="mt-3 text-sm text-zinc-500">No anchor batches yet.</p>
+                    <p className="mt-3 text-sm" style={{ color: "var(--text-muted)" }}>
+                        No anchor batches recorded yet.
+                    </p>
                 ) : (
-                    <table className="mt-4 w-full text-sm">
-                        <thead className="text-left text-xs uppercase text-zinc-500">
-                            <tr>
-                                <th className="py-2">Batch</th>
-                                <th>Events</th>
-                                <th>Status</th>
-                                <th>Transaction</th>
-                            </tr>
-                        </thead>
-                        <tbody>
-                            {anchor_batches.map((a) => (
-                                <tr key={a.id} className="border-t border-zinc-200 dark:border-zinc-800">
-                                    <td className="py-2 font-mono text-xs">{a.id.slice(0, 8)}…</td>
-                                    <td>{a.event_count}</td>
-                                    <td>{a.status}</td>
-                                    <td>
-                                        {a.tx_hash ? (
-                                            <a
-                                                className="font-mono text-xs underline"
-                                                href={`https://sepolia.basescan.org/tx/${a.tx_hash}`}
-                                                target="_blank"
-                                                rel="noopener noreferrer"
-                                            >
-                                                {a.tx_hash.slice(0, 10)}…
-                                            </a>
-                                        ) : (
-                                            "—"
-                                        )}
-                                    </td>
+                    <div className="card mt-4 overflow-x-auto">
+                        <table className="data-table">
+                            <thead>
+                                <tr>
+                                    <th scope="col">Batch</th>
+                                    <th scope="col" className="num">
+                                        Events
+                                    </th>
+                                    <th scope="col">Status</th>
+                                    <th scope="col">Transaction</th>
                                 </tr>
-                            ))}
-                        </tbody>
-                    </table>
+                            </thead>
+                            <tbody>
+                                {anchor_batches.map((a) => (
+                                    <tr key={a.id}>
+                                        <td className="mono text-xs">
+                                            {a.id.slice(0, 8)}…
+                                        </td>
+                                        <td className="num">{a.event_count}</td>
+                                        <td>
+                                            <span className={anchorBadgeClass(a.status)}>
+                                                {a.status}
+                                            </span>
+                                        </td>
+                                        <td>
+                                            {a.tx_hash ? (
+                                                <a
+                                                    className="mono text-xs underline"
+                                                    href={`https://sepolia.basescan.org/tx/${a.tx_hash}`}
+                                                    target="_blank"
+                                                    rel="noopener noreferrer"
+                                                >
+                                                    {a.tx_hash.slice(0, 10)}…
+                                                </a>
+                                            ) : (
+                                                "—"
+                                            )}
+                                        </td>
+                                    </tr>
+                                ))}
+                            </tbody>
+                        </table>
+                    </div>
                 )}
             </section>
+
+            <div className="alert alert-info mt-12" role="note">
+                <span aria-hidden="true">ⓘ</span>
+                <p>
+                    This page shows what was reported for this initiative. To
+                    understand how the figures are reconciled and what the result
+                    does not prove, see the{" "}
+                    <Link href="/method" className="underline">
+                        method &amp; limitations
+                    </Link>
+                    .
+                </p>
+            </div>
         </main>
     );
 }
 
-function Stat({ label, value, count }: { label: string; value: string; count?: number }) {
+function Stat({
+    label,
+    value,
+    hint,
+}: {
+    label: string;
+    value: string;
+    hint?: string;
+}) {
     return (
-        <div className="rounded-2xl border border-zinc-200 p-5 dark:border-zinc-800">
-            <div className="text-xs uppercase tracking-wider text-zinc-500">{label}</div>
-            <div className="mt-2 text-2xl font-semibold">{value}</div>
-            {typeof count === "number" && (
-                <div className="mt-1 text-xs text-zinc-500">{count.toLocaleString()} entries</div>
-            )}
+        <div className="kpi">
+            <p className="kpi-label">{label}</p>
+            <p className="kpi-value">{value}</p>
+            {hint && <p className="kpi-hint">{hint}</p>}
         </div>
     );
 }

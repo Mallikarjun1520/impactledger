@@ -1,4 +1,4 @@
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from uuid import uuid4
 
 from fastapi.testclient import TestClient
@@ -10,7 +10,6 @@ from app.core.exceptions import (
     DuplicateSlugError,
     LastAdminError,
     MemberAlreadyExistsError,
-    OrganizationNotFoundError,
 )
 from app.infrastructure.database.organization_members import OrganizationMembership
 from app.main import app
@@ -105,7 +104,7 @@ def test_create_organization_duplicate_slug_returns_409(monkeypatch) -> None:
 def test_get_organization_member_can_access(monkeypatch) -> None:
     user_id = uuid4()
     org_id = uuid4()
-    now = datetime.now(timezone.utc)
+    now = datetime.now(UTC)
     _override_membership(user_id, org_id, "VIEWER", monkeypatch)
 
     monkeypatch.setattr(
@@ -248,7 +247,7 @@ def test_add_member_admin_succeeds(monkeypatch) -> None:
     monkeypatch.setattr(
         organizations_api,
         "add_organization_member",
-        lambda organization_id, data: OrganizationMembership(
+        lambda organization_id, data, actor_user_id=None: OrganizationMembership(
             organization_id=organization_id,
             user_id=data.user_id,
             role=data.role.value,
@@ -292,7 +291,7 @@ def test_add_member_already_exists_returns_409(monkeypatch) -> None:
     org_id = uuid4()
     _override_membership(admin_id, org_id, "ADMIN", monkeypatch)
 
-    def raise_exists(organization_id, data):
+    def raise_exists(organization_id, data, actor_user_id=None):
         raise MemberAlreadyExistsError("User is already a member of this organization")
 
     monkeypatch.setattr(organizations_api, "add_organization_member", raise_exists)
@@ -318,7 +317,7 @@ def test_update_member_role_admin_succeeds(monkeypatch) -> None:
     monkeypatch.setattr(
         organizations_api,
         "update_organization_member",
-        lambda organization_id, user_id, role: OrganizationMembership(
+        lambda organization_id, user_id, role, actor_user_id=None: OrganizationMembership(
             organization_id=organization_id,
             user_id=user_id,
             role=role.value,
@@ -363,7 +362,7 @@ def test_update_member_not_found_returns_404(monkeypatch) -> None:
     monkeypatch.setattr(
         organizations_api,
         "update_organization_member",
-        lambda organization_id, user_id, role: None,
+        lambda organization_id, user_id, role, actor_user_id=None: None,
     )
 
     try:
@@ -388,7 +387,7 @@ def test_cannot_demote_final_admin(monkeypatch) -> None:
     org_id = uuid4()
     _override_membership(admin_id, org_id, "ADMIN", monkeypatch)
 
-    def raise_last_admin(organization_id, user_id, role):
+    def raise_last_admin(organization_id, user_id, role, actor_user_id=None):
         raise LastAdminError("Organization must have at least one admin")
 
     monkeypatch.setattr(organizations_api, "update_organization_member", raise_last_admin)
@@ -410,7 +409,7 @@ def test_cannot_delete_final_admin(monkeypatch) -> None:
     org_id = uuid4()
     _override_membership(admin_id, org_id, "ADMIN", monkeypatch)
 
-    def raise_last_admin(organization_id, user_id):
+    def raise_last_admin(organization_id, user_id, actor_user_id=None):
         raise LastAdminError("Organization must have at least one admin")
 
     monkeypatch.setattr(organizations_api, "delete_organization_member", raise_last_admin)
@@ -435,7 +434,7 @@ def test_delete_member_admin_succeeds(monkeypatch) -> None:
     monkeypatch.setattr(
         organizations_api,
         "delete_organization_member",
-        lambda organization_id, user_id: True,
+        lambda organization_id, user_id, actor_user_id=None: True,
     )
 
     try:
@@ -478,7 +477,7 @@ def test_delete_member_not_found_returns_404(monkeypatch) -> None:
     monkeypatch.setattr(
         organizations_api,
         "delete_organization_member",
-        lambda organization_id, user_id: False,
+        lambda organization_id, user_id, actor_user_id=None: False,
     )
 
     try:

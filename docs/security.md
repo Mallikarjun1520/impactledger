@@ -10,7 +10,10 @@
    the JWT (`SUPABASE_JWT_SECRET`) and resolves organization membership on
    every request via `apps/api/app/core/authorization.py`.
 4. **Supabase Postgres** — second line of defense. RLS policies (migration
-   `020_rls_policies.sql`) enforce tenant isolation independently of the API.
+   `021_rls_policies.sql`) enforce tenant isolation independently of the API;
+   migration `024_audit_events_role_rls.sql` restricts raw audit reads to
+   organization admins and auditors. Legacy `audit_logs` history is copied
+   into `audit_events` and the legacy table is retained for service-role use.
 5. **Blockchain (Base Sepolia)** — integrity anchor only. No PII on-chain,
    ever. See ADR-007.
 

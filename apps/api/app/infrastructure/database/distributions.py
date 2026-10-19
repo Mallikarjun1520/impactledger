@@ -5,6 +5,7 @@ import psycopg
 
 from app.api.v1.schemas import DistributionCreate
 from app.core.config import settings
+from app.infrastructure.database.audit_logs import insert_audit_event
 
 
 def create_distribution(
@@ -19,14 +20,26 @@ def create_distribution(
 
             # Lock the batch row and verify it belongs to the authenticated
             # organization. This prevents cross-tenant access and serializes
-            # concurrent distribution operations on the same batch.
+            # concurrent distribution operations on the same batch. The join
+            # resolves the batch's provenance (PO -> commitment -> allocation)
+            # so the DISTRIBUTED event can carry the originating initiative and
+            # purchase order for public attribution.
             cursor.execute(
                 """
-                SELECT id
-                FROM resource_batches
-                WHERE id = %s
-                  AND organization_id = %s
-                FOR UPDATE
+                SELECT rb.id, rb.purchase_order_id, a.initiative_id
+                FROM resource_batches rb
+                LEFT JOIN purchase_orders po
+                  ON po.id = rb.purchase_order_id
+                 AND po.organization_id = rb.organization_id
+                LEFT JOIN commitments cm
+                  ON cm.id = po.commitment_id
+                 AND cm.organization_id = po.organization_id
+                LEFT JOIN allocations a
+                  ON a.id = cm.allocation_id
+                 AND a.organization_id = cm.organization_id
+                WHERE rb.id = %s
+                  AND rb.organization_id = %s
+                FOR UPDATE OF rb
                 """,
                 (
                     data.resource_batch_id,
@@ -40,6 +53,9 @@ def create_distribution(
                 raise ValueError(
                     "Resource batch not found or does not belong to organization"
                 )
+
+            batch_purchase_order_id = batch[1]
+            batch_initiative_id = batch[2]
 
             # Calculate current inventory while the batch row is locked.
             cursor.execute(
@@ -144,6 +160,9 @@ def create_distribution(
             cursor.execute(
                 """
                 INSERT INTO resource_events (
+                    organization_id,
+                    initiative_id,
+                    purchase_order_id,
                     resource_batch_id,
                     event_type,
                     quantity,
@@ -153,6 +172,9 @@ def create_distribution(
                 )
                 VALUES (
                     %s,
+                    %s,
+                    %s,
+                    %s,
                     'DISTRIBUTED',
                     %s,
                     %s,
@@ -161,12 +183,28 @@ def create_distribution(
                 )
                 """,
                 (
+                    target_org_id,
+                    batch_initiative_id,
+                    batch_purchase_order_id,
                     data.resource_batch_id,
                     data.quantity,
                     data.destination,
                     created_by,
                     f"Distribution {distribution_id}",
                 ),
+            )
+            insert_audit_event(
+                cursor,
+                organization_id=target_org_id,
+                event_type="ADMIN_ACTION",
+                user_id=created_by,
+                details={
+                    "action": "RESOURCE_DISTRIBUTED",
+                    "entity_type": "distribution",
+                    "entity_id": str(distribution_id),
+                    "resource_batch_id": str(data.resource_batch_id),
+                    "quantity": str(data.quantity),
+                },
             )
 
             conn.commit()

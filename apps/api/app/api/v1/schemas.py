@@ -64,6 +64,7 @@ class ResourceBatchCreate(BaseModel):
     resource_type_id: UUID
     batch_code: str = Field(min_length=1, max_length=100)
     quantity: float = Field(gt=0)
+    purchase_order_id: UUID | None = None
     source_description: str | None = None
     location: str | None = None
 
@@ -72,6 +73,7 @@ class ResourceBatchResponse(BaseModel):
     id: UUID
     resource_type_id: UUID
     organization_id: UUID
+    purchase_order_id: UUID | None = None
     batch_code: str
     quantity: float
     source_description: str | None = None
@@ -176,3 +178,62 @@ class InventoryItemResponse(BaseModel):
     resource_type_name: str
     unit: str
     available_quantity: float
+
+
+# ---------------------------------------------------------------------------
+# Day 4: Audit Logs
+# ---------------------------------------------------------------------------
+
+
+class AuditLogResponse(BaseModel):
+    id: UUID
+    organization_id: UUID
+    actor_id: UUID
+    action: str
+    entity_type: str
+    entity_id: UUID
+    timestamp: datetime
+    metadata: dict | None = None
+
+
+class AuditEventResponse(BaseModel):
+    id: UUID
+    organization_id: UUID | None
+    event_type: str
+    user_id: UUID | None
+    subject_user_id: UUID | None
+    ip: str | None
+    user_agent: str | None
+    details: dict
+    created_at: datetime
+
+
+# ---------------------------------------------------------------------------
+# Day 5: Dashboard Summary, Trace, Public Transparency
+# ---------------------------------------------------------------------------
+
+
+class DashboardSummaryResponse(BaseModel):
+    total_contributions: float
+    contribution_count: int
+    total_allocated: float
+    allocation_count: int
+    distribution_count: int
+    total_distributed_quantity: float
+    inventory_items: int
+
+
+class PublicDistributionItem(BaseModel):
+    destination: str
+    quantity: float
+    resource_type: str | None = None
+    date: datetime
+
+
+class PublicTransparencyResponse(BaseModel):
+    organization_name: str
+    total_contributions: float
+    contribution_count: int
+    total_distributed_quantity: float
+    distribution_count: int
+    distributions: list[PublicDistributionItem]

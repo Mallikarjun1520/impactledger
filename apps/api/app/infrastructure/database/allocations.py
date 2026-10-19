@@ -10,6 +10,7 @@ from app.core.exceptions import (
     ContributionNotFoundError,
     InvalidAllocationError,
 )
+from app.infrastructure.database.audit_logs import insert_audit_event
 
 
 def create_allocation(
@@ -86,10 +87,24 @@ def create_allocation(
             )
             row = cursor.fetchone()
             columns = [col.name for col in cursor.description]
+            allocation = dict(zip(columns, row))
+            insert_audit_event(
+                cursor,
+                organization_id=organization_id,
+                event_type="ADMIN_ACTION",
+                user_id=user_id,
+                details={
+                    "action": "ALLOCATION_RECORDED",
+                    "entity_type": "allocation",
+                    "entity_id": str(allocation["id"]),
+                    "contribution_id": str(data.contribution_id),
+                    "amount": str(data.amount),
+                },
+            )
 
         connection.commit()
 
-    return dict(zip(columns, row))
+    return allocation
 
 
 def list_allocations(

@@ -11,9 +11,9 @@ import logging
 from uuid import UUID
 
 from app.infrastructure.database import anchor as anchor_db
-from app.services.anchor import AnchorRequest, build_adapter
+from app.infrastructure.database.audit_logs import create_audit_event
+from app.services.anchor import AnchorReceipt, AnchorRequest, build_adapter
 from app.services.merkle import merkle_root_hex
-
 
 log = logging.getLogger(__name__)
 
@@ -23,25 +23,24 @@ def close_and_submit_batch(
     contract_address: str,
     chain_id: int,
     max_events: int,
+    performed_by: UUID | None = None,
 ) -> anchor_db.AnchorBatchRow | None:
     """Close a batch of pending events for one org and dispatch to the chain.
 
     Returns the batch row (in SUBMITTED state) or None if there was nothing to
-    do. On submission failure the batch is marked FAILED and member events
-    revert to PENDING so a later attempt can retry them.
+    do. On submission failure the batch is marked FAILED, retained in history,
+    and its events become eligible for a new batch.
     """
-    pending = anchor_db.fetch_pending_events(organization_id, max_events)
-    if not pending:
-        return None
-
-    root_hex = merkle_root_hex([e.hash for e in pending])
     batch = anchor_db.create_batch(
         organization_id=organization_id,
-        events=pending,
-        merkle_root_hex=root_hex,
+        max_events=max_events,
         chain_id=chain_id,
         contract_address=contract_address or None,
+        merkle_root=merkle_root_hex,
     )
+    if batch is None:
+        return None
+    root_hex = batch.merkle_root
 
     adapter = build_adapter()
     try:
@@ -55,6 +54,16 @@ def close_and_submit_batch(
     except Exception as exc:                             # noqa: BLE001 — chain layer
         log.exception("Anchor submission failed for batch %s", batch.id)
         anchor_db.mark_failed(batch.id, str(exc)[:500])
+        create_audit_event(
+            organization_id=organization_id,
+            event_type="ANCHOR_SUBMISSION_FAILED",
+            user_id=performed_by,
+            details={
+                "entity_type": "anchor_batch",
+                "entity_id": str(batch.id),
+                "failure_reason": str(exc)[:500],
+            },
+        )
         return None
 
     anchor_db.record_submission(
@@ -67,13 +76,12 @@ def close_and_submit_batch(
 
 
 def confirm_batch(batch_id: UUID, min_confirmations: int) -> bool:
-    """Check chain confirmations; flip batch + member events on success."""
+    """Check chain confirmations and update only the mutable batch record."""
     batch = anchor_db.get_batch(batch_id)
     if batch is None or batch.tx_hash is None or batch.status != "SUBMITTED":
         return False
 
     adapter = build_adapter()
-    from app.services.anchor import AnchorReceipt
     receipt = AnchorReceipt(
         tx_hash=batch.tx_hash,
         block_number=batch.block_number,

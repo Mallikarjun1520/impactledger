@@ -32,7 +32,7 @@ BRIDGE:    purchase_order → receipt (creates a resource_batch)
 
 - Easier: correct discrepancy detection (a PO paid ₹55k, evidence says
   ₹52k → mismatch; distinct from "500 blankets ordered, 480 received").
-- Harder: some queries need to join across sides. Views in migration `021`
+- Harder: some queries need to join across sides. Views in migration `022`
   precompute the common ones.
 
 ## Revisit conditions
